@@ -31,13 +31,21 @@ def _layer_by_name(env, name):
     return None
 
 
+def _as_node(v):
+    """経路地点番号を int にそろえる（list が混ざると setDestination でエラーになる）"""
+    if isinstance(v, (list, tuple)):
+        v = v[0]
+    return int(v)
+
+
 def _nodes_in_region(env, ureg):
     pg = env.pathgraph
     found = []
     for v in env.getAllPathPoints():
-        p = pg.nodes[v]["p"]
+        vn = _as_node(v)
+        p = pg.nodes[vn]["p"]
         if ureg.includes(float(p[0]), float(p[1])):
-            found.append(v)
+            found.append(vn)
     return found
 
 
@@ -81,7 +89,7 @@ def _index_regions_by_stair_id(env, layer):
                 "WARN [stair_warp]: multiple points in '%s' stair_id=%s -> use %s"
                 % (layer.getName(), sid, nodes[0])
             )
-        out[sid] = {"region": ureg, "node": nodes[0]}
+        out[sid] = {"region": ureg, "node": _as_node(nodes[0])}
     return out
 
 
@@ -123,7 +131,7 @@ for sid, up in _upper_map.items():
             "upper_node": up["node"],
             "lower_entrance_node": lo_ent,
             "lower_stair_goal_node": lo_goal,
-            "t": float(_DEFAULT_STAIR_TIME),
+            "t": int(_DEFAULT_STAIR_TIME),
         }
     )
 
