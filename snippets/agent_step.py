@@ -7,7 +7,7 @@
 
 # --- 2F -> 1F 階段ワープ ---
 if not getattr(self, "_stair_warped_2f_1f", False):
-    _env = self.env
+    _env = self.agentset.env
     _links = getattr(_env, "STAIR_WARPS_2F_1F", None)
     if _links:
         _x = float(self.p[0])
