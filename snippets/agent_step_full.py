@@ -8,8 +8,12 @@ def _as_node(v):
     return int(v)
 
 
+def _find_warp_goal(_env, _info):
+    return _as_node(_info.get("lower_stair_goal_node"))
+
+
 # =============================================================================
-# 1. 階段ワープ（必ず isStopping 判定より先）
+# 1. 階段ワープ（isStopping 判定より先）
 # =============================================================================
 if not getattr(self, "_stair_warped_2f_1f", False):
     _env = self.agentset.env
@@ -27,15 +31,17 @@ if not getattr(self, "_stair_warped_2f_1f", False):
                 continue
 
             _lo_ent = _as_node(_info["lower_entrance_node"])
-            _lo_goal = _as_node(_info.get("lower_stair_goal_node"))
+            _lo_goal = _find_warp_goal(_env, _info)
             _pos = _env.sampleInnerPathPoint(_lo_ent)
             _pos = (float(_pos[0]), float(_pos[1]))
 
-            if _lo_goal is not None:
-                self.setDestination(v=_lo_goal, delayed=False)
-
+            # 滞留中は fix、終了後に 1F ゴールへ（delayed=True で滞留後に適用）
             self.setStaying(t=int(_info["t"]), p=_pos, stayType="fix")
+            if _lo_goal is not None:
+                self.setDestination(v=_lo_goal, delayed=True)
+
             self._stair_warped_2f_1f = True
+            self._stair_1f_goal = _lo_goal
             print(
                 "stair warp 2F->1F:",
                 self.agentid,
@@ -47,23 +53,26 @@ if not getattr(self, "_stair_warped_2f_1f", False):
 
 
 # =============================================================================
-# 2. 停止・エラー時の処理（デフォルトを修正）
+# 2. ワープ済みで停止中 → 1F 階段ゴールへ再開（止まったまま対策）
+# =============================================================================
+if getattr(self, "_stair_warped_2f_1f", False):
+    _lo_goal = _as_node(getattr(self, "_stair_1f_goal", None))
+    if _lo_goal is not None:
+        _dest = _as_node(self.getDestination())
+        if _dest != _lo_goal or self.isStopping():
+            if not self.inArea(_lo_goal):
+                self.setDestination(v=_lo_goal, delayed=False)
+
+
+# =============================================================================
+# 3. 停止・エラー時の処理
 # =============================================================================
 if self.isStopping():
     if getattr(self, "_stair_warped_2f_1f", False):
-        # ワープ済み：1F「階段」ゴールに着くまで削除しない
-        _env = self.agentset.env
-        _dest = _as_node(self.getDestination())
-        _remove = False
-        for _info in getattr(_env, "STAIR_WARPS_2F_1F", []) or []:
-            _goal = _as_node(_info.get("lower_stair_goal_node"))
-            if _goal is not None and _dest == _goal and self.inArea(_goal):
-                _remove = True
-                break
-        if _remove:
+        _lo_goal = _as_node(getattr(self, "_stair_1f_goal", None))
+        if _lo_goal is not None and self.inArea(_lo_goal):
             self.agentset.remove(self)
     else:
-        # 1F 直行など、ワープなしの通常終了
         self.agentset.remove(self)
 
 elif self.isInErrorState():
