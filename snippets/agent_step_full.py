@@ -8,12 +8,8 @@ def _as_node(v):
     return int(v)
 
 
-def _find_warp_goal(_env, _info):
-    return _as_node(_info.get("lower_stair_goal_node"))
-
-
 # =============================================================================
-# 1. 階段ワープ（isStopping 判定より先）
+# 1. 階段ワープ（isStopping より先・ここだけで転移する）
 # =============================================================================
 if not getattr(self, "_stair_warped_2f_1f", False):
     _env = self.agentset.env
@@ -31,11 +27,11 @@ if not getattr(self, "_stair_warped_2f_1f", False):
                 continue
 
             _lo_ent = _as_node(_info["lower_entrance_node"])
-            _lo_goal = _find_warp_goal(_env, _info)
+            _lo_goal = _as_node(_info.get("lower_stair_goal_node"))
             _pos = _env.sampleInnerPathPoint(_lo_ent)
             _pos = (float(_pos[0]), float(_pos[1]))
 
-            # 滞留中は fix、終了後に 1F ゴールへ（delayed=True で滞留後に適用）
+            # ★ setDestination(delayed=False) は setStaying を打ち消すので呼ばない
             self.setStaying(t=int(_info["t"]), p=_pos, stayType="fix")
             if _lo_goal is not None:
                 self.setDestination(v=_lo_goal, delayed=True)
@@ -53,19 +49,17 @@ if not getattr(self, "_stair_warped_2f_1f", False):
 
 
 # =============================================================================
-# 2. ワープ済みで停止中 → 1F 階段ゴールへ再開（止まったまま対策）
+# 2. 滞留明け：停止が解けたあとだけゴールを再設定（滞留中は触らない）
 # =============================================================================
-if getattr(self, "_stair_warped_2f_1f", False):
+if getattr(self, "_stair_warped_2f_1f", False) and not self.isStopping():
     _lo_goal = _as_node(getattr(self, "_stair_1f_goal", None))
-    if _lo_goal is not None:
-        _dest = _as_node(self.getDestination())
-        if _dest != _lo_goal or self.isStopping():
-            if not self.inArea(_lo_goal):
-                self.setDestination(v=_lo_goal, delayed=False)
+    if _lo_goal is not None and not self.inArea(_lo_goal):
+        if _as_node(self.getDestination()) != _lo_goal:
+            self.setDestination(v=_lo_goal, delayed=False)
 
 
 # =============================================================================
-# 3. 停止・エラー時の処理
+# 3. 停止・エラー
 # =============================================================================
 if self.isStopping():
     if getattr(self, "_stair_warped_2f_1f", False):
