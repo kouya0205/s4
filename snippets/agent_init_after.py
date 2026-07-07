@@ -26,9 +26,13 @@ if random.random() < elderlyRate:
     self.v0 = v0Elderly
     self.v1 = v1Elderly
     self.screenColor = _COLOR_ELDERLY
+    self.screenMarker = "^"
+    self.screenSize = 10
     self._ped_category = "elderly"
 else:
     self.v0 = v0General
     self.v1 = v1General
     self.screenColor = _COLOR_GENERAL
+    self.screenMarker = "o"
+    self.screenSize = 8
     self._ped_category = "general"
