@@ -1,31 +1,65 @@
 # =============================================================================
 # ミクロ人流エージェント > エージェント集合の人流機能 > proc2
 #
-# elderlyRate をパラメータから取得し、生成ごとに一般／高齢者を確率的に割り当てる。
-# proc2 の先頭に import random を追加し、innerproc を以下に差し替える。
+# 【重要】generateAgentsAndSetDest() は v0 引数を受け取れない。
+# 一般／高齢者の速度差は snippets/agent_init_after.py（生成後の処理）で設定する。
+#
+# proc2 の innerproc は位置ばらつきのみ担当し、生成行は次の形にする：
+#   generateAgentsAndSetDest(_rp, lns_[1:])
 # =============================================================================
 
-# --- proc2 先頭に追加 ---
+# --- proc2 先頭 ---
 # import random
 
 
-# --- proc2 内 innerproc（先頭4スペースから） ---
+# --- innerproc 例（部屋内ランダム位置 + 通常生成） ---
 def innerproc(pp_, n_, lns_):
     ncnt = 0
-    _param = self.env.simulator.param
-    elderlyRate = float(getattr(_param, "elderlyRate", 0.3))
-    v0General = float(getattr(_param, "v0General", 1.2))
-    v1General = float(getattr(_param, "v1General", 1.5))
-    v0Elderly = float(getattr(_param, "v0Elderly", 0.8))
-    v1Elderly = float(getattr(_param, "v1Elderly", 1.0))
-
     for ng in gen:
-        if random.random() < elderlyRate:
-            _v0, _v1 = v0Elderly, v1Elderly
-        else:
-            _v0, _v1 = v0General, v1General
+        _env = self.env
+        _pp = int(pp_)
+        _pg = _env.pathgraph
+        _p = _pg.nodes[_pp]["p"]
+        _x, _y = float(_p[0]), float(_p[1])
+        _rp = _pp
 
-        generateAgentsAndSetDest(int(pp_), lns_[1:], v0=_v0, v1=_v1)
+        for _lname in ("部屋_2F", "部屋_1F", "部屋"):
+            _layer = None
+            for _ly in _env.getAllLayers():
+                if _ly.getName() == _lname:
+                    _layer = _ly
+                    break
+            if _layer is None:
+                continue
+
+            _ureg_hit = None
+            for _u in _layer:
+                if _u.isGroup():
+                    _uregs = _u.getUserDefinedRegions()
+                else:
+                    _uregs = [_u]
+                for _ureg in _uregs:
+                    if _ureg.includes(_x, _y):
+                        _ureg_hit = _ureg
+                        break
+                if _ureg_hit is not None:
+                    break
+
+            if _ureg_hit is None:
+                continue
+
+            _cands = []
+            for _v in _env.getAllPathPoints():
+                _vn = int(_v)
+                _pv = _pg.nodes[_vn]["p"]
+                if _ureg_hit.includes(float(_pv[0]), float(_pv[1])):
+                    _cands.append(_vn)
+
+            if len(_cands) > 0:
+                _rp = random.choice(_cands)
+                break
+
+        generateAgentsAndSetDest(_rp, lns_[1:])
         ncnt += 1
         if ncnt < n_:
             yield pause(ng)
