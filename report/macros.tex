@@ -1,0 +1,17 @@
+% 画像が未配置でもコンパイルできるようにするマクロ
+\newcommand{\includesfmmap}[2][]{%
+  \IfFileExists{#2}{%
+    \includegraphics[#1]{#2}%
+  }{%
+    \fbox{%
+      \begin{minipage}[c][0.32\textheight][c]{0.92\linewidth}
+        \centering
+        \vspace{1em}
+        {\large 【画像未配置】}\\[0.8em]
+        \texttt{#2}\\[0.8em]
+        {\small SFMMap からエクスポートした画像を上記パスに保存してください。}
+        \vspace{1em}
+      \end{minipage}%
+    }%
+  }%
+}

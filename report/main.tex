@@ -1,0 +1,406 @@
+\documentclass[11pt,a4paper]{ltjsarticle}
+
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage[margin=25mm]{geometry}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  stringstyle=\color{teal},
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  tabsize=2,
+  showstringspaces=false
+}
+
+\input{macros.tex}
+
+\title{S-quattroを用いた多階建て避難シミュレーション\\
+  階段ワープ機構の実装と人流設定}
+\author{%
+  氏名 \\
+  名古屋工業大学 工学部 情報工学科 \\
+  打矢研究室
+}
+\date{2026年7月}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+本報告では，人流シミュレーションソフトウェア S-quattro（以下 S4）を用い，
+名工大・打矢研の \texttt{saya} モデルにおいて 2階から 1階への階段移動を再現する
+ワープ機構を実装した内容をまとめる．
+S4 のミクロ人流地図およびミクロ人流エージェントに Python コードを直接埋め込む方式とし，
+外部モジュールに依存しない運用を可能にした．
+2F 階段出口での座標転移，1F 階段入口から 1F 階段ゴールへの 2 段階経路設定，
+および 3 か所の階段に対する自動ペアリングを動作確認した．
+一方，人流機能 \texttt{proc2} における初期生成位置のランダム化は，
+API 制約および実行環境の問題により未達成である．
+\end{abstract}
+
+\section{はじめに}
+
+建物内の避難シミュレーションでは，複数階にまたがる歩行者の移動を
+ミクロscopic モデルで再現する必要がある．
+S4 は Social Force Model（SFM）に基づく人流シミュレータであり，
+地図エディタ上で経路網・領域（レイヤー）を定義し，
+エージェントの生成・移動・相互作用をシミュレーションできる．
+
+本共同研究では，2階・1階を持つ \texttt{saya} モデルを対象に，
+階段を介した縦方向移動を S4 上で表現することを目的とした．
+S4 単体では階間の物理的接続を直接扱えないため，
+2F 階段ゴール到達時に 1F 合流点へ座標を転移する
+\textbf{ワープ機構}を Python スクリプトで実装した．
+
+\section{研究背景と目的}
+
+\subsection{背景}
+
+階段混雑は避難時のボトルネックとなりうる．
+実験のみでは再現が困難な大規模・多人数の条件を，
+シミュレーションにより検討する必要がある．
+打矢研究室では S4 を用いた建物内人流の再現を進めており，
+本モデルは 2F から 1F への避難経路を含む．
+
+\subsection{目的}
+
+本研究の具体的な目的は以下のとおりである．
+\begin{enumerate}[label=\arabic*.]
+  \item SFMMap 上で階段に対応する領域レイヤーを定義する．
+  \item 2F 階段出口到達時に 1F 階段入口へワープする機構を実装する．
+  \item ワープ後，1F 階段ゴールまでエージェントが移動できることを確認する．
+  \item 部屋内の複数経路地点からランダムに初期生成する機能を検討する．
+\end{enumerate}
+
+\section{シミュレーション環境}
+
+\subsection{S-quattro（S4）}
+
+S4 はエージェントベースの人流シミュレーション環境である．
+主要な構成要素を表\ref{tab:components}に示す．
+
+\begin{table}[H]
+  \centering
+  \caption{S4 における主要部品と役割}
+  \label{tab:components}
+  \begin{tabular}{ll}
+    \toprule
+    部品名 & 役割 \\
+    \midrule
+    ミクロ人流地図 & 経路網，レイヤー，環境の初期化 \\
+    ミクロ人流エージェント & エージェント集合，ステップ処理，人流生成 \\
+    SFMMap（地図エディタ） & 平面図・経路地点・ユーザー定義領域の編集 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{対象モデル \texttt{saya}}
+
+対象は名工大・打矢研の \texttt{saya} モデルである．
+2階・1階の平面を持ち，階段は 3 か所（例：BR，TR，CL）存在する．
+各階に「部屋」領域を配置し，人流の始点・終点として用いる．
+
+\section{地図・レイヤー構成}
+
+\subsection{SFMMap 地図}
+
+図\ref{fig:sfmmap_overview}--\ref{fig:sfmmap_1f}に SFMMap 上の地図配置のイメージを示す．
+実際のスクリーンショットは \texttt{report/figures/} 以下に配置する．
+
+\begin{figure}[H]
+  \centering
+  \includesfmmap[width=0.92\linewidth]{figures/sfmmap_overview.png}
+  \caption{SFMMap 地図全体（2F・1F の配置）}
+  \label{fig:sfmmap_overview}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}{0.48\linewidth}
+    \centering
+    \includesfmmap[width=\linewidth]{figures/sfmmap_2f.png}
+    \caption{2階}
+    \label{fig:sfmmap_2f}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.48\linewidth}
+    \centering
+    \includesfmmap[width=\linewidth]{figures/sfmmap_1f.png}
+    \caption{1階}
+    \label{fig:sfmmap_1f}
+  \end{subfigure}
+  \caption{SFMMap 各階平面図}
+  \label{fig:sfmmap_floors}
+\end{figure}
+
+\subsection{レイヤー定義}
+
+階段ワープのために，表\ref{tab:layers}のレイヤーを定義した．
+各階段について，2F・1F それぞれに対応する領域を 1 つずつ設ける．
+
+\begin{table}[H]
+  \centering
+  \caption{レイヤー構成（確定版）}
+  \label{tab:layers}
+  \begin{tabular}{lll}
+    \toprule
+    レイヤー名 & 階 & 役割 \\
+    \midrule
+    \texttt{部屋\_2F} / \texttt{部屋\_1F}（または \texttt{部屋}） & 2F / 1F & 人流の始点 \\
+    \texttt{階段出口\_2F} & 2F & 2F 階段ゴール，ワープのトリガー \\
+    \texttt{階段入口\_1F} & 1F & ワープ後の出現位置（人流には不使用） \\
+    \texttt{階段} & 1F & 1F 階段ゴール（ワープ後の目的地） \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includesfmmap[width=0.85\linewidth]{figures/sfmmap_layers.png}
+  \caption{レイヤー・ユーザー定義領域の配置例}
+  \label{fig:sfmmap_layers}
+\end{figure}
+
+推奨として，対応する 3 領域（2F 出口，1F 入口，1F ゴール）に
+同一の属性 \texttt{stair\_id}（例：\texttt{BR}）を付与する．
+未設定時はレイヤー内の領域を座標順に自動ペアリングする．
+
+\section{実装内容}
+
+実装は S4 の既存タブに Python コードを貼り付ける\textbf{インライン方式}とした．
+外部 \texttt{.py} ファイルの配置は不要である．
+
+\subsection{地図：環境の初期化後の処理}
+
+\textbf{貼り付け先：}ミクロ人流地図 $\rightarrow$ 環境の初期化後の処理
+
+\begin{itemize}
+  \item \texttt{def initAfter(...)} は定義しない（タブ内容がそのまま実行される）．
+  \item レイヤー名から \texttt{STAIR\_WARPS\_2F\_1F} リストを自動構築する．
+  \item 各要素に \texttt{stair\_id}，\texttt{upper\_region}，\texttt{upper\_node}，
+        \texttt{lower\_entrance\_node}，\texttt{lower\_stair\_goal\_node}，\texttt{t} を格納する．
+\end{itemize}
+
+初期化完了時，ログに次の形式が出力される．
+
+\begin{lstlisting}[language=Python,caption={ワープ表構築ログの例}]
+=== [MAP] STAIR_WARPS_2F_1F ===
+stair_0 up 55 (...) entrance 7 (...) 1F_goal 9 (...)
+stair_1 up 81 (...) entrance 41 (...) 1F_goal 39 (...)
+stair_2 up 79 (...) entrance 21 (...) 1F_goal 24 (...)
+=== [MAP] STAIR_WARPS_2F_1F END (count=3) ===
+\end{lstlisting}
+
+\subsection{エージェント：ステップ処理}
+
+\textbf{貼り付け先：}ミクロ人流エージェント $\rightarrow$ エージェントのステップ処理（既存コードの末尾に追記）
+
+処理は次の 3 段階に分かれる．
+
+\paragraph{(1) 2F $\rightarrow$ 1F ワープ}
+エージェントが \texttt{階段出口\_2F} 領域に入ると，
+\texttt{setStaying(t=0, p=入口座標, stayType="float")} により 1F 入口座標へ転移する．
+環境参照は \texttt{self.agentset.env} を用いる（\texttt{self.env} は不可）．
+
+\paragraph{(2) 1F 2 段階ルート}
+ワープ直後は \texttt{階段入口\_1F} ノードを目的地とし，
+到着後に \texttt{階段}（1F ゴール）へ \texttt{setDestination} する．
+1F 経路網の接続不足を避けるための 2 段階設定である．
+
+\paragraph{(3) 停止・除去}
+\texttt{isStopping()} 時，2F 階段到着では除去しない．
+1F \texttt{階段} ゴール到着時のみ \texttt{agentset.remove} する．
+二重ワープ防止のため \texttt{\_stair\_warped\_2f\_1f} フラグを用いる．
+
+\subsection{人流設定}
+
+表\ref{tab:peopleflow}のとおり，エージェント集合の人流機能で経路を設定した．
+
+\begin{table}[H]
+  \centering
+  \caption{人流設定}
+  \label{tab:peopleflow}
+  \begin{tabular}{lll}
+    \toprule
+    対象 & 始点レイヤー & 終点レイヤー \\
+    \midrule
+    2F エージェント & \texttt{部屋\_2F}（または \texttt{部屋}） & \texttt{階段出口\_2F} \\
+    1F エージェント & \texttt{部屋\_1F}（または \texttt{部屋}） & \texttt{階段} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\texttt{proc0}（ランダム経路の無限生成）は使用せず，
+\texttt{proc2}（経路地点ごとに生成）を用いた．
+
+\subsection{動作フロー}
+
+\begin{figure}[H]
+  \centering
+  \fbox{%
+    \begin{minipage}{0.88\linewidth}
+      \vspace{0.5em}
+      \textbf{2F:}\quad 部屋 $\rightarrow$ 階段出口\_2F（領域進入）\\[0.4em]
+      $\downarrow$\quad \texttt{setStaying} により 1F 階段入口へ座標転移\\[0.4em]
+      \textbf{1F:}\quad 階段入口\_1F に出現 $\rightarrow$ 階段（1F ゴール）へ移動\\[0.4em]
+      $\downarrow$\quad 1F ゴール到着でエージェント除去
+      \vspace{0.5em}
+    \end{minipage}%
+  }
+  \caption{階段ワープの動作フロー}
+  \label{fig:flow}
+\end{figure}
+
+\section{動作確認結果}
+
+\subsection{階段ワープ}
+
+3 か所の階段すべてについて，次を確認した．
+\begin{itemize}
+  \item 初期化ログで \texttt{count=3} が出力されること
+  \item 2F 階段出口到達後，1F 入口付近にエージェントが出現すること
+  \item 1F 階段ゴールまで移動し，正常に除去されること
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \includesfmmap[width=0.88\linewidth]{figures/simulation_log.png}
+  \caption{シミュレーション画面およびログ出力（任意）}
+  \label{fig:simulation}
+\end{figure}
+
+\subsection{遭遇したエラーと対処}
+
+表\ref{tab:errors}に実装過程で発生した主な問題をまとめる．
+
+\begin{table}[H]
+  \centering
+  \caption{主なエラーと対処}
+  \label{tab:errors}
+  \small
+  \begin{tabular}{p{4.2cm}p{8.5cm}}
+    \toprule
+    症状 & 対処 \\
+    \midrule
+    \texttt{AttributeError: 'env'} &
+      エージェント step では \texttt{self.agentset.env} を使用 \\
+    ワープ後すぐ消える &
+      \texttt{isStopping} 時，2F 階段到着では \texttt{remove} しない \\
+    経路なし・\texttt{goal None} &
+      1F 経路接続の確認，2 段階 \texttt{setDestination} を導入 \\
+    \texttt{KeyError}（座標を渡した場合） &
+      \texttt{generateAgentsAndSetDest} にはノード番号（\texttt{int}）のみ渡す \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{初期生成位置のばらつき（未達成）}
+
+部屋内の複数経路地点からランダムにエージェントを生成するため，
+人流機能 \texttt{proc2} 内の \texttt{innerproc} をカスタマイズした．
+同一部屋レイヤー内の経路地点を列挙し，
+\texttt{random.choice} で選択して \texttt{generateAgentsAndSetDest} を呼ぶ方針とした．
+
+\subsection{試行内容}
+
+\begin{enumerate}[label=\arabic*.]
+  \item 部屋領域内の経路地点候補を列挙し，ランダムに 1 点選択
+  \item 選択した\textbf{ノード番号}を \texttt{generateAgentsAndSetDest} の第 1 引数に渡す
+  \item 座標タプル \texttt{(x, y)} は API 仕様上不可（\texttt{KeyError}）
+  \item ヘルパー関数を別スコープに置くと \texttt{NameError} が発生したため，
+        \texttt{innerproc} 内にインライン実装
+\end{enumerate}
+
+\subsection{未達成の理由}
+
+以下の理由により，初期位置のばらつきは本報告時点で実現できなかった．
+\begin{itemize}
+  \item \texttt{innerproc} のインデント誤りによる \texttt{IndentationError}
+  \item 修正版実行時に S4 が強制終了（原因はスコープ・負荷・API 制約の複合と推定）
+  \item \texttt{generateAgentsAndSetDest} が期待する引数形式の制約が厳しく，
+        ドキュメント不足のため試行錯誤が必要だった
+\end{itemize}
+
+今後は生成個数 1・エージェント 1 種類の最小構成で段階的に検証する．
+代替案として，部屋内に複数の人流経路（始点ノード）を手動で登録する方法も検討できる．
+
+\section{課題と今後の展望}
+
+\begin{itemize}
+  \item \textbf{初期生成のランダム化：}
+        \texttt{proc2} の安全なカスタマイズ，または S4 標準機能の調査
+  \item \textbf{階段降下時間：}
+        現在 \texttt{\_DEFAULT\_STAIR\_TIME = 5.0} 秒固定．実測・文献値との比較
+  \item \textbf{混雑度の定量化：}
+        階段出口・入口における密度，待ち時間，流出率の評価
+  \item \textbf{人数スケール：}
+        少数確認から段階的にエージェント数を増やし，計算負荷と物理的妥当性を検証
+  \item \textbf{再現性：}
+        スニペットとレイヤー定義のドキュメント整備（本リポジトリ \texttt{snippets/}）
+\end{itemize}
+
+\section{まとめ}
+
+本共同研究では，S4 の \texttt{saya} モデルに対し，
+2F から 1F への階段ワープ機構をインライン Python で実装し，動作を確認した．
+地図初期化で \texttt{STAIR\_WARPS\_2F\_1F} を自動構築し，
+エージェントステップで座標転移と 2 段階ルート設定を行う構成は，
+外部ファイルに依存せず再現可能である．
+一方，部屋内初期生成位置のランダム化は技術的課題が残る．
+今後は人流条件の拡張と混難評価指標の導入を進める．
+
+\begin{thebibliography}{9}
+\bibitem{s4}
+  名古屋工業大学 打矢研究室，
+  S-quattro 人流シミュレーション環境（研究室資料）．
+
+\bibitem{sfm}
+  D. Helbing and P. Moln\'ar，
+  ``Social force model for pedestrian dynamics，''
+  \textit{Physical Review E}, vol.~51, no.~5, pp.~4282--4286, 1995.
+
+\bibitem{repo}
+  本実装スニペット群，
+  \url{https://github.com/kouya0205/s4}（\texttt{snippets/} ディレクトリ）．
+\end{thebibliography}
+
+\appendix
+\section{実装ファイル一覧}
+
+\begin{table}[H]
+  \centering
+  \caption{リポジトリ内スニペットと貼り付け先}
+  \begin{tabular}{ll}
+    \toprule
+    ファイル & 貼り付け先 \\
+    \midrule
+    \texttt{snippets/map\_init\_after.py} & ミクロ人流地図 $>$ 環境の初期化後の処理 \\
+    \texttt{snippets/agent\_step\_full.py} & ミクロ人流エージェント $>$ エージェントのステップ処理 \\
+    \texttt{snippets/peopleflow\_scatter\_innerproc.py} &
+      人流機能 \texttt{proc2} の \texttt{innerproc}（試行中） \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\end{document}
